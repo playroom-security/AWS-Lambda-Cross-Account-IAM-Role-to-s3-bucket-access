@@ -1,32 +1,55 @@
+import json
 import boto3
+import os
+import uuid
 
-# AWS Lambda function to access an S3 bucket in another AWS account
-# This function assumes a role in Account2 to access an S3 bucket.
-def lambda_handler(event, context):
-    sts_client = boto3.client('sts')
-    assumed_role = sts_client.assume_role( 
-        RoleArn="arn:aws:iam::<Account2-ID>:role/LambdaS3AccessRole", # Replace <Account2-ID> with the actual AWS Account ID of Account2
-        RoleSessionName="LambdaSession" # A unique session name for the assumed role
-    )
+def handler(event, context):
+    """Lambda function to list objects in an S3 bucket in Account 2 using a cross-account IAM role."""
+    # Set the AWS region if not already set
+    if 'AWS_DEFAULT_REGION' not in os.environ:
+        os.environ['AWS_DEFAULT_REGION'] = 'us-west-2'  # Replace with your desired AWS region  
+    # Log the event for debugging
+    print(f"Received event: {json.dumps(event)}")
+    # Log the context for debugging
+    print(f"Received context: {json.dumps(context.__dict__)}")
+    # Ensure the required environment variables are set
+    
+    try:
+        # Replace with the ARN of the role in Account 2
+        account2RoleArn = 'arn:aws:iam::2222-2222-2222:role/Lambdas3LisBucketPolicy'
+        
+        # Replace with the name of the target S3 bucket
+        target_bucket = 'my-target-bucket'  # Replace with your target bucket name
 
-    # Use the temporary credentials to create an S3 client
-    creds = assumed_role['Credentials'] # Get the temporary credentials
-    s3 = boto3.client(
-        's3',
-        aws_access_key_id=creds['AccessKeyId'], # Access Key ID
-        aws_secret_access_key=creds['SecretAccessKey'], # Secret Access Key
-        aws_session_token=creds['SessionToken'] # Session Token
-    )
+        # Assume the role in Account 2
+        sts_client = boto3.client('sts')
+        response = sts_client.assume_role(
+            RoleArn=account2RoleArn,
+            RoleSessionName="{}-s3".format(str(uuid.uuid4())[:5])
+        )
 
-    response = s3.list_objects_v2(Bucket='<Bucket-Name>') # Replace with the actual bucket name in Account2
-    print(response)
-    return {
-        'statusCode': 200,
-        'body': response
-    }
-# Ensure that the Lambda function has the necessary permissions to assume the role in Account2
-# and that the role in Account2 trusts the Lambda function's execution role in Account1.
-# Replace <Account2-ID> with the actual AWS Account ID of Account2 and <Bucket-Name> with the name of the S3 bucket in Account2.
-# This code assumes that the Lambda function is running in Account1 and needs to access resources in Account2.
-# Make sure to configure the IAM roles and policies correctly to allow cross-account access.
-# Note: This code is for demonstration purposes and may need adjustments based on your specific use case and AWS environment.
+        # Create a session using the temporary credentials
+        session = boto3.Session(
+            aws_access_key_id=response['Credentials']['AccessKeyId'],
+            aws_secret_access_key=response['Credentials']['SecretAccessKey'],
+            aws_session_token=response['Credentials']['SessionToken']
+        )
+
+        # Use the session to create an S3 client
+        s3 = session.client('s3')
+
+        # List objects in the specified bucket
+        object_list = s3.list_objects_v2(Bucket=target_bucket)
+
+        # Extract object keys
+        if 'Contents' in object_list:
+            keys = [obj['Key'] for obj in object_list['Contents']]
+            print(f"Objects in bucket '{target_bucket}': {keys}")
+            return keys
+        else:
+            print(f"No objects found in bucket '{target_bucket}'.")
+            return []
+
+    except Exception as e:
+        print(f"Error: {e}")
+        raise e
